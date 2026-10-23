@@ -1,0 +1,31 @@
+[R11][SAVE][GAME] /NES/Demo.nes => /save/Demo_35474516_12345678.ssN
+[PASS] primary valid
+[R13.1][SAVE][RECOVER] slot=0 origem=BAK valido=1
+[PASS] backup recovered
+[R13.1][SAVE][RECOVER] slot=0 origem=TMP valido=1
+[PASS] temp complete recovered
+[R13.1][SAVE][RECOVER] slot=0 origem=BAK valido=1
+[PASS] corrupt protected, no overwrite .bad0
+[R13.1][SAVE][RECOVER] slot=0 origem=TMP valido=1
+[PASS] temp fallback with corrupt main
+[PASS] corrupt temp not promoted
+[PASS] absent not recovered
+[R11][SAVE][OK] slot=0 file=/save/Demo_35474516_12345678.ss0
+[R11][LOAD][OK] slot=0 ROM preservada
+[R11][SAVE][OK] slot=0 file=/save/Demo_35474516_12345678.ss0
+[PASS] native save and load via patched rom filename; backup preserved
+[R12][LIB] indice ausente ou invalido; inicio vazio
+[R12][LIB][SAVE] favoritos=1 recentes=0
+[R12][LIB][SAVE] favoritos=1 recentes=1
+[R12][LIB][SAVE] favoritos=1 recentes=1
+[R12][LIB][LOAD] fav=1 recent=1 last=ABCDEF01 volume=45
+[PASS] HALO_LIB roundtrip and checksum
+[R13.1][SAVE][ABORT] destino existente invalido ou acesso SD falhou slot=0 stat=0 errno=0
+[PASS] saves existentes invalidos permanecem intactos
+[R11][SAVE][OK] slot=0 file=/save/Demo_35474516_12345678.ss0
+[PASS] gravação valida com backup anterior existente
+[R12][LIB][SAVE] favoritos=1 recentes=1
+[R12][LIB][BACKUP] recuperado
+[PASS] HALO_LIB corrompido volta ao backup verificado
+[R13.1][LIB][ABORT] principal invalido; restaure BACKUP antes de gravar
+[PASS] backup de favoritos protegido contra principal invalido

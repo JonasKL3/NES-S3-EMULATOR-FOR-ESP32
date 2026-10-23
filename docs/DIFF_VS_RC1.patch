@@ -1,0 +1,159 @@
+--- R13.1_RC1/NES_S3/NES_S3.ino
++++ R13.1_RC2/NES_S3/NES_S3.ino
+@@ -1,5 +1,5 @@
+ /*
+- * NES-S3 - v0.2.9.11-r13.1-demo-rc1 (SEM WIFI)
++ * NES-S3 - v0.2.9.11-r13.1-demo-rc2 (SEM WIFI)
+  * Primeiro firmware com nucleo de emulacao Nofrendo real.
+  * Core externo: moononournation/arduino-nofrendo, versao 1.2
+  * O proprio projeto NAO inclui ROMs nem distribui a biblioteca de terceiros.
+@@ -542,7 +542,7 @@
+ 
+ void setup(){
+   Serial.begin(115200);delay(700);
+-  Serial.println("\n===============================================\n NES-S3 v0.2.9.11-r13.1-demo-rc1 -- SEM WIFI\n===============================================");
++  Serial.println("\n===============================================\n NES-S3 v0.2.9.11-r13.1-demo-rc2 -- SEM WIFI\n===============================================");
+   Serial.printf("[BOOT] CPU=%u MHz flash=%u PSRAM=%u\n",ESP.getCpuFreqMHz(),ESP.getFlashChipSize(),ESP.getPsramSize());
+   Serial.printf("[RESET] esp_reset_reason=%d (consulte esp_system.h para descricao exata)\n", (int)esp_reset_reason());
+   reportMemory("boot");
+@@ -623,7 +623,7 @@
+   Serial.println("[BLE] Dabble.begin(ESP32-S3-NES-LAB)");
+   Dabble.begin("ESP32-S3-NES-LAB");
+   reportMemory("ready");
+-  Serial.println("[READY] NES-S3 R13.1 DEMO: offline, biblioteca, capas SD, SNSS e I2S.");
++  Serial.println("[READY] NES-S3 R13.1 DEMO RC2: offline, biblioteca, capas SD, SNSS e I2S.");
+   Serial.println("[CORE] Nofrendo v0.2.4 + patches v0.2.9.3/v0.2.9.4 (ROM integrity + WDT).");
+   Serial.println("[SD][POLICY] recovery apenas no MENU apos EIO/ENODEV/ENXIO, sem segundo SPI.");
+   Serial.println("[VIDEO][PERF] blitLastMs/blitMaxMs: medem tempo de escrita SPI; nao medem VSync/TE.");
+--- R13.1_RC1/NES_S3/halo_library.cpp
++++ R13.1_RC2/NES_S3/halo_library.cpp
+@@ -8,6 +8,7 @@
+ #include <stdlib.h>
+ #include <sys/stat.h>
+ #include <unistd.h>
++#include <errno.h>
+ #ifndef HALO_LIB_ROOT
+ #define HALO_LIB_ROOT "/sd/save"
+ #endif
+@@ -28,7 +29,7 @@
+ int volume(){return vol;}
+ // Save file uses text records, verified with a trailing FNV hash.
+ static uint32_t step(uint32_t h,const char *s){while(*s){h=(h^(unsigned char)*s++)*16777619u;}return h;}
+-static bool parse(const char *p){
++static bool parse(const char *p,bool apply=true){
+  FILE*f=fopen(p,"rb");if(!f)return false;
+  char line[92]={};uint32_t vf[500]={},vr[RECENT_MAX]={},vl=0;int vv=35;unsigned nf=0,nr=0;
+  uint32_t hash=2166136261u,expected=0;bool footer=false,ok=false;
+@@ -47,7 +48,7 @@
+   if(sscanf(line,"REC %lx",&id)==1){if(nr>=RECENT_MAX)break;vr[nr++]=(uint32_t)id;continue;}
+   break;
+  }
+- if(footer&&expected==hash){memcpy(fav,vf,nf*sizeof(uint32_t));count=nf;memcpy(rec,vr,nr*sizeof(uint32_t));rc=nr;last=vl;vol=vv;ok=true;}
++ if(footer&&expected==hash){if(apply){memcpy(fav,vf,nf*sizeof(uint32_t));count=nf;memcpy(rec,vr,nr*sizeof(uint32_t));rc=nr;last=vl;vol=vv;}ok=true;}
+ end:fclose(f);return ok;
+ }
+ bool load(){
+@@ -70,11 +71,32 @@
+  if(fflush(f)!=0)ok=false;
+  const int fd=fileno(f);if(fd>=0&&fsync(fd)!=0)Serial.println("[R12][LIB][WARN] fsync nao suportado");
+  if(fclose(f)!=0)ok=false;
+- if(!ok||!parse(TEMP)){remove(TEMP);Serial.println("[R12][LIB][FAIL] TMP nao passou verificacao");return false;}
+- // Cuidado: parse(TEMP) altera buffers globais, mas carrega os mesmos dados.
+- remove(BACK);
+- if(rename(PATH,BACK)!=0){struct stat old={};if(stat(PATH,&old)==0){remove(TEMP);return false;}}
+- if(rename(TEMP,PATH)!=0){rename(BACK,PATH);Serial.println("[R12][LIB][FAIL] commit");return false;}
++ if(!ok||!parse(TEMP,false)){remove(TEMP);Serial.println("[R12][LIB][FAIL] TMP nao passou verificacao");return false;}
++ // Verificacao TEMP nao modifica preferencias de memoria em uso.
++ // Nunca tratar EIO/ENODEV como arquivo ausente e executar rename por cima.
++ struct stat mainStat={};errno=0;
++ const bool hasMain=(stat(PATH,&mainStat)==0);
++ if(!hasMain && errno!=ENOENT){
++   Serial.printf("[R13.1][LIB][ABORT] stat principal errno=%d\n",errno);return false;
++ }
++ if(hasMain){
++   // Nao sacrificar o ultimo BACKUP bom quando PATH esta corrompido.
++   if(!S_ISREG(mainStat.st_mode) || !parse(PATH,false)){
++     Serial.println("[R13.1][LIB][ABORT] principal invalido; restaure BACKUP antes de gravar");
++     return false;
++   }
++   errno=0;
++   if(remove(BACK)!=0 && errno!=ENOENT){
++     Serial.printf("[R13.1][LIB][ABORT] backup nao removido errno=%d\n",errno);return false;
++   }
++   if(rename(PATH,BACK)!=0){
++     Serial.printf("[R13.1][LIB][FAIL] copia do principal errno=%d\n",errno);return false;
++   }
++ }
++ if(rename(TEMP,PATH)!=0){
++   if(hasMain)rename(BACK,PATH);
++   Serial.printf("[R12][LIB][FAIL] commit errno=%d\n",errno);return false;
++ }
+  Serial.printf("[R12][LIB][SAVE] favoritos=%u recentes=%u\n",count,rc);return true;
+ }
+ void toggleFavorite(uint32_t id){if(!id)return;for(unsigned i=0;i<count;i++)if(fav[i]==id){for(unsigned j=i+1;j<count;j++)fav[j-1]=fav[j];--count;save();return;}if(count<500){fav[count++]=id;save();}}
+--- R13.1_RC1/NES_S3/halo_savestates.cpp
++++ R13.1_RC2/NES_S3/halo_savestates.cpp
+@@ -175,16 +175,54 @@
+   }
+   // Ao salvar novamente, recuperar o ultimo backup se a gravacao anterior
+   // foi interrompida durante o commit (destino faltando/invalido).
+-  recoverBackup(slot);
+-  remove(tmp); // sobras de uma gravacao antiga nunca contam como save valido
++  // Um stat() com EIO/ENODEV nao pode ser interpretado como "nao existe".
++  // E um save corrompido sem backup nao deve ser sobrescrito silenciosamente.
++  if(!recoverBackup(slot)) {
++    struct stat current={};
++    errno=0;
++    const int rc=stat(file,&current);
++    const int e=errno;
++    if(rc==0 || e!=ENOENT){
++      Serial.printf("[R13.1][SAVE][ABORT] destino existente invalido ou acesso SD falhou slot=%d stat=%d errno=%d\n",slot,rc,e);
++      return false;
++    }
++  }
++  // Se sobrou um _TMP completo e nao houve recuperacao, preserva-o no PC.
++  // O arquivo incompleto anterior pode ser substituido somente com SD saudavel.
++  errno=0;
++  if(remove(tmp)!=0 && errno!=ENOENT){
++    Serial.printf("[R13.1][SAVE][ABORT] nao pode limpar TMP errno=%d\n",errno);
++    return false;
++  }
+   if(!saveNative(slot)||!validSnss(tmp)){
+-    Serial.printf("[R11][SAVE][FAIL] SNSS incompleto ou SD falhou slot=%d errno=%d\n",slot,errno);
+-    remove(tmp);return false;
+-  }
+-  if(filePresent(file)){
+-    // Preservar o ultimo estado conhecido antes de trocar arquivos.
+-    remove(bak);
+-    if(rename(file,bak)!=0){Serial.printf("[R11][SAVE][FAIL] backup errno=%d\n",errno);remove(tmp);return false;}
++    const int failure=errno;
++    Serial.printf("[R11][SAVE][FAIL] SNSS incompleto ou SD falhou slot=%d errno=%d\n",slot,failure);
++    // Nao tentar apagar nada quando FAT sinaliza falha fisica de E/S.
++    if(failure!=EIO && failure!=ENODEV && failure!=ENXIO)remove(tmp);
++    return false;
++  }
++  struct stat current={};
++  errno=0;
++  const bool hasPrimary=(stat(file,&current)==0);
++  if(!hasPrimary && errno!=ENOENT){
++    Serial.printf("[R13.1][SAVE][ABORT] stat destino errno=%d\n",errno);
++    return false;
++  }
++  if(hasPrimary){
++    if(!S_ISREG(current.st_mode) || !validSnss(file)){
++      Serial.println("[R13.1][SAVE][ABORT] estado anterior invalido - preservado");
++      return false;
++    }
++    // Backup antigo so e removido DEPOIS de o novo temporario estar validado.
++    errno=0;
++    if(remove(bak)!=0 && errno!=ENOENT){
++      Serial.printf("[R13.1][SAVE][ABORT] nao removeu BAK errno=%d\n",errno);
++      return false;
++    }
++    if(rename(file,bak)!=0){
++      Serial.printf("[R11][SAVE][FAIL] backup errno=%d\n",errno);
++      return false;
++    }
+   }
+   if(rename(tmp,file)!=0){
+     const int e=errno;
